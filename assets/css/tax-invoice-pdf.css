@@ -1,0 +1,135 @@
+body {
+	font-family: DejaVu Sans, sans-serif;
+	font-size: 12px;
+	color: #1f2933;
+	line-height: 1.45;
+}
+
+.invoice-top-bar {
+	height: 6px;
+	background: #2e2e2e;
+	margin-bottom: 24px;
+}
+
+.header {
+	width: 100%;
+	margin-bottom: 28px;
+}
+
+.invoice-title {
+	font-size: 30px;
+	font-weight: bold;
+	text-transform: uppercase;
+	color: #111827;
+	margin-bottom: 8px;
+}
+
+.invoice-meta-card {
+	background: #f8fafc;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 12px;
+	line-height: 1.7;
+}
+
+.columns {
+	width: 100%;
+	margin-bottom: 26px;
+}
+
+.info-box {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 14px;
+	background: #ffffff;
+}
+
+.column {
+	width: 48%;
+	vertical-align: top;
+}
+
+.section-title {
+	font-size: 12px;
+	font-weight: bold;
+	color: #6b7280;
+	margin-bottom: 8px;
+	text-transform: uppercase;
+	letter-spacing: .04em;
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.items-table th {
+	background: #f8fafc;
+	color: #374151;
+	border-bottom: 1px solid #d1d5db;
+	padding: 9px 8px;
+	font-weight: bold;
+}
+
+.items-table td {
+	border-bottom: 1px solid #e5e7eb;
+	padding: 9px 8px;
+	vertical-align: top;
+}
+
+.items-table th,
+.items-table td {
+	border-left: 0;
+	border-right: 0;
+	border-top: 0;
+}
+
+.text-right {
+	text-align: right;
+}
+
+.totals {
+	width: 45%;
+	margin-left: auto;
+	margin-top: 20px;
+	border: 1px solid #e5e7eb;
+}
+
+.totals th,
+.totals td {
+	padding: 8px;
+	border-bottom: 1px solid #e5e7eb;
+}
+
+.totals tr:last-child th,
+.totals tr:last-child td {
+	background: #111827;
+	color: #ffffff;
+	font-size: 13px;
+	font-weight: bold;
+}
+
+.tax-summary-table th,
+.tax-summary-table td {
+	border: 1px solid #e5e7eb;
+	padding: 8px;
+}
+
+.tax-summary-table th {
+	background: #f8fafc;
+}
+
+.note {
+	margin-top: 24px;
+	padding: 12px;
+	border-left: 4px solid #2e2e2e;
+	background: #f8fafc;
+}
+
+.footer {
+	margin-top: 34px;
+	padding-top: 12px;
+	border-top: 1px solid #e5e7eb;
+	font-size: 10px;
+	color: #6b7280;
+}

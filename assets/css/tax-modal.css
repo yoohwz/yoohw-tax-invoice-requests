@@ -1,0 +1,91 @@
+.yoohw-tax-modal {
+	display: none;
+	position: fixed;
+	z-index: 99999;
+	inset: 0;
+}
+
+.yoohw-tax-modal.is-active {
+	display: block;
+}
+
+.yoohw-tax-modal__overlay {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.48);
+}
+
+.yoohw-tax-modal__dialog {
+	position: relative;
+	background: #fff;
+	width: calc(100% - 32px);
+	max-width: 560px;
+	max-height: calc(100vh - 64px);
+	overflow-y: auto;
+	margin: 32px auto;
+	padding: 28px;
+	border-radius: 6px;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+}
+
+.yoohw-tax-modal__close {
+	position: absolute;
+	top: 12px;
+	right: 16px;
+	border: 0;
+	background: transparent;
+	font-size: 28px;
+	cursor: pointer;
+	color: #555;
+}
+
+.yoohw-tax-form .form-row {
+	margin-bottom: 16px;
+}
+
+.yoohw-tax-form label {
+	display: block;
+	margin-bottom: 6px;
+	font-weight: 600;
+}
+
+.yoohw-tax-form .input-text {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.yoohw-tax-form textarea.input-text {
+	min-height: 110px;
+	resize: vertical;
+}
+
+.yoohw-tax-form__actions {
+	display: flex;
+	gap: 10px;
+	margin-top: 20px;
+}
+
+.yoohw-tax-secondary-button {
+	opacity: 0.8;
+}
+
+body.yoohw-tax-modal-open {
+	overflow: hidden;
+}
+
+@media (max-width: 600px) {
+	.yoohw-tax-modal__dialog {
+		width: calc(100% - 24px);
+		margin: 24px auto;
+		padding: 22px;
+	}
+
+	.yoohw-tax-form__actions {
+		display: block;
+	}
+
+	.yoohw-tax-form__actions .button {
+		width: 100%;
+		margin-bottom: 10px;
+	}
+}

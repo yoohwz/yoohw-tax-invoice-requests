@@ -1,0 +1,37 @@
+Tax Invoice Requests for WooCommerce Changelog
+
+1.0.1 - June 23, 2026
+
+- Bumped plugin version from 1.0.0 to 1.0.1.
+- Hardened generated PDF storage:
+  - Added randomized PDF file names to make direct guessing impractical.
+  - Added stricter `.htaccess` deny rules for the invoice upload folder.
+  - Re-applies invoice folder protection when the plugin loads.
+- Added shared invoice file path validation and used it for:
+  - Protected PDF downloads.
+  - Customer email attachments.
+  - Admin cleanup of replaced PDF files.
+- Improved invoice numbering reliability:
+  - Added an option-based lock around invoice number reservation.
+  - Existing invoice numbers remain preserved during regeneration.
+- Fixed guest customer download links:
+  - Valid WooCommerce order keys are now preserved when building invoice download URLs.
+- Improved PDF generation failure handling:
+  - Disabled unnecessary Dompdf remote fetching.
+  - Wrapped Dompdf rendering in exception handling so failed generation returns a WordPress error instead of causing a fatal.
+- Improved tax summary output:
+  - Taxable amounts are now built from line item, fee, and shipping tax records rather than being inferred by dividing tax amount by rate.
+- Added admin invoice actions in the WooCommerce order metabox:
+  - Regenerate invoice PDF.
+  - Resend invoice email.
+  - Both actions use POST requests, nonces, and WooCommerce order management capability checks.
+- Improved admin invoice action feedback:
+  - Adds order notes when PDFs are regenerated or emails are resent.
+  - Shows admin notices after action completion or failure.
+  - Customer tax invoice email trigger now returns success/failure for better admin feedback.
+- Improved the admin metabox layout:
+  - Download, regenerate, and resend buttons now use consistent full-width styling.
+  - Action buttons are spaced vertically to avoid visual crowding.
+- Improved tax invoice metabox visibility:
+  - Orders with existing invoice-related metadata now show invoice actions even if the request flag is missing.
+- Removed packaged `.DS_Store` files and added `.DS_Store` to `.gitignore`.
