@@ -1,6 +1,7 @@
 <?php
 /**
  * Plugin Name: Tax Invoice Requests for WooCommerce
+ * Plugin URI: https://yoohw.com/product/tax-invoice-requests/
  * Description: Allows customers to request Tax invoices from WooCommerce orders and automatically generate PDF invoices.
  * Version: 1.0.1
  * Author: YoOhw.com
