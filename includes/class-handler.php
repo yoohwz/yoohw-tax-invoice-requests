@@ -96,79 +96,108 @@ class YoOhw_Tir_Handler {
 			$tax_id_label = __( 'Tax ID / VAT / GST Number', 'yoohw-tax-invoice-requests' );
 		}
 
-		$order->update_meta_data( '_yoohw_tir_requested', 'yes' );
-		$order->update_meta_data( '_yoohw_tir_status', 'requested' );
-
-		$order->update_meta_data( '_yoohw_tir_company', $customer_name );
-		$order->update_meta_data( '_yoohw_tir_tax_id', $tax_id );
-		$order->update_meta_data( '_yoohw_tir_tax_id_label', $tax_id_label );
-		$order->update_meta_data( '_yoohw_tir_country', $country );
-		$order->update_meta_data( '_yoohw_tir_address', $address );
-		$order->update_meta_data( '_yoohw_tir_email', $email );
-		$order->update_meta_data( '_yoohw_tir_note', $note );
-
-		if ( is_user_logged_in() ) {
-			update_user_meta( get_current_user_id(), '_yoohw_tir_company', $customer_name );
-			update_user_meta( get_current_user_id(), '_yoohw_tir_tax_id', $tax_id );
-			update_user_meta( get_current_user_id(), '_yoohw_tir_tax_id_label', $tax_id_label );
-			update_user_meta( get_current_user_id(), '_yoohw_tir_country', $country );
-			update_user_meta( get_current_user_id(), '_yoohw_tir_address', $address );
-			update_user_meta( get_current_user_id(), '_yoohw_tir_email', $email );
-			update_user_meta( get_current_user_id(), '_yoohw_tir_note', $note );
+		$lock = YoOhw_Tir_Order_Lock::acquire( $order_id );
+		if ( is_wp_error( $lock ) ) {
+			wc_add_notice( $lock->get_error_message(), 'notice' );
+			return;
 		}
 
-		$order->add_order_note(
-			sprintf(
-				/* translators: 1: Tax ID label, 2: Tax ID value. */
-				__( 'Customer requested a tax invoice. %1$s: %2$s', 'yoohw-tax-invoice-requests' ),
-				$tax_id_label,
-				$tax_id
-			)
-		);
+		try {
+			// Read persisted metadata after acquiring the lock, including with HPOS caching.
+			$order = wc_get_order( $order_id );
+			YoOhw_Tir_Order_Lock::refresh( $order );
+			if ( $order->get_meta( '_yoohw_tir_requested' ) || $order->get_meta( '_yoohw_tir_invoice_number' ) || $order->get_meta( '_yoohw_tir_pdf_path' ) || $order->get_meta( '_yoohw_tir_status' ) ) {
+				wc_add_notice( __( 'A tax invoice has already been requested for this order. Please contact the store if you need assistance.', 'yoohw-tax-invoice-requests' ), 'notice' );
+				return;
+			}
 
-		$order->save();
+			$order->update_meta_data( '_yoohw_tir_requested', 'yes' );
+			$order->update_meta_data( '_yoohw_tir_status', 'requested' );
 
-		if ( class_exists( 'YoOhw_Tir_PDF_Generator' ) ) {
-			$pdf_result = YoOhw_Tir_PDF_Generator::generate( $order->get_id() );
+			$order->update_meta_data( '_yoohw_tir_company', $customer_name );
+			$order->update_meta_data( '_yoohw_tir_tax_id', $tax_id );
+			$order->update_meta_data( '_yoohw_tir_tax_id_label', $tax_id_label );
+			$order->update_meta_data( '_yoohw_tir_country', $country );
+			$order->update_meta_data( '_yoohw_tir_address', $address );
+			$order->update_meta_data( '_yoohw_tir_email', $email );
+			$order->update_meta_data( '_yoohw_tir_note', $note );
 
-			if ( is_wp_error( $pdf_result ) ) {
-				$order->add_order_note(
-					sprintf(
-						/* translators: %s: PDF generation error message. */
-						__( 'Tax invoice PDF generation failed: %s', 'yoohw-tax-invoice-requests' ),
-						$pdf_result->get_error_message()
-					)
-				);
+			if ( is_user_logged_in() ) {
+				update_user_meta( get_current_user_id(), '_yoohw_tir_company', $customer_name );
+				update_user_meta( get_current_user_id(), '_yoohw_tir_tax_id', $tax_id );
+				update_user_meta( get_current_user_id(), '_yoohw_tir_tax_id_label', $tax_id_label );
+				update_user_meta( get_current_user_id(), '_yoohw_tir_country', $country );
+				update_user_meta( get_current_user_id(), '_yoohw_tir_address', $address );
+				update_user_meta( get_current_user_id(), '_yoohw_tir_email', $email );
+				update_user_meta( get_current_user_id(), '_yoohw_tir_note', $note );
+			}
 
-				$order->update_meta_data( '_yoohw_tir_status', 'pdf_failed' );
-				$order->save();
+			$order->add_order_note(
+				sprintf(
+					/* translators: 1: Tax ID label, 2: Tax ID value. */
+					__( 'Customer requested a tax invoice. %1$s: %2$s', 'yoohw-tax-invoice-requests' ),
+					$tax_id_label,
+					$tax_id
+				)
+			);
 
-				$this->set_order_notice(
-					$order,
-					__( 'Your tax invoice request was submitted, but the PDF could not be generated automatically.', 'yoohw-tax-invoice-requests' ),
-					'notice'
-				);
-			} else {
-				WC()->mailer();
+			$order->save();
 
-				$emails = WC()->mailer()->get_emails();
+			if ( class_exists( 'YoOhw_Tir_PDF_Generator' ) ) {
+				$pdf_result = YoOhw_Tir_PDF_Generator::generate( $order->get_id() );
 
-				if ( ! empty( $emails['YoOhw_Tir_Email_Tax_Invoice'] ) ) {
-					$emails['YoOhw_Tir_Email_Tax_Invoice']->trigger( $order->get_id() );
+				if ( is_wp_error( $pdf_result ) ) {
+					$order->add_order_note(
+						sprintf(
+							/* translators: %s: PDF generation error message. */
+							__( 'Tax invoice PDF generation failed: %s', 'yoohw-tax-invoice-requests' ),
+							$pdf_result->get_error_message()
+						)
+					);
+
+					$order->update_meta_data( '_yoohw_tir_status', 'pdf_failed' );
+					$order->save();
+
+					$this->set_order_notice(
+						$order,
+						__( 'Your tax invoice request was submitted, but the PDF could not be generated automatically.', 'yoohw-tax-invoice-requests' ),
+						'notice'
+					);
+				} else {
+					$emails = WC()->mailer()->get_emails();
+					$sent   = false;
+
+					if ( ! empty( $emails['YoOhw_Tir_Email_Tax_Invoice'] ) ) {
+						$sent = $emails['YoOhw_Tir_Email_Tax_Invoice']->trigger( $order->get_id() );
+					}
+
+					// Reload: PDF generation saves a separate order instance.
+					$order = wc_get_order( $order_id );
+					$order->update_meta_data( '_yoohw_tir_email_status', $sent ? 'accepted' : 'failed' );
+					$order->add_order_note( $sent
+						? __( 'Tax invoice email was accepted by the mail transport.', 'yoohw-tax-invoice-requests' )
+						: __( 'Tax invoice email could not be sent. An admin can resend the existing PDF.', 'yoohw-tax-invoice-requests' )
+					);
+					$order->save();
+
+					$this->set_order_notice(
+						$order,
+						$sent
+							? __( 'Your tax invoice PDF has been generated and its email was accepted for sending.', 'yoohw-tax-invoice-requests' )
+							: __( 'Your tax invoice PDF has been generated, but its email could not be sent. Please contact the store to resend it.', 'yoohw-tax-invoice-requests' ),
+						$sent ? 'success' : 'notice'
+					);
 				}
-
+			} else {
 				$this->set_order_notice(
 					$order,
-					__( 'Your tax invoice request has been submitted and the PDF invoice has been generated.', 'yoohw-tax-invoice-requests' ),
+					__( 'Your tax invoice request has been submitted.', 'yoohw-tax-invoice-requests' ),
 					'success'
 				);
 			}
-		} else {
-			$this->set_order_notice(
-				$order,
-				__( 'Your tax invoice request has been submitted.', 'yoohw-tax-invoice-requests' ),
-				'success'
-			);
+
+		} finally {
+			YoOhw_Tir_Order_Lock::release( $lock );
 		}
 
 		wp_safe_redirect( $this->get_redirect_url( $order ) );

@@ -11,6 +11,7 @@ class YoOhw_Tir_Plugin {
 		require_once YOOHW_TIR_PATH . 'includes/class-pdf-generator.php';
 		require_once YOOHW_TIR_PATH . 'includes/class-download.php';
 		require_once YOOHW_TIR_PATH . 'includes/class-my-account.php';
+		require_once YOOHW_TIR_PATH . 'includes/class-order-lock.php';
 		require_once YOOHW_TIR_PATH . 'includes/class-handler.php';
 		require_once YOOHW_TIR_PATH . 'includes/class-admin.php';
 		require_once YOOHW_TIR_PATH . 'includes/class-email.php';

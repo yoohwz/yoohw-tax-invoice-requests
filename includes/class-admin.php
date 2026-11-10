@@ -6,12 +6,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class YoOhw_Tir_Admin {
 
+	private $action_forms = [];
+
 	public function __construct() {
 		add_action( 'add_meta_boxes', [ $this, 'add_tax_invoice_metabox' ] );
 		add_action( 'admin_post_yoohw_tir_regenerate_invoice', [ $this, 'handle_regenerate_invoice' ] );
 		add_action( 'admin_post_yoohw_tir_resend_invoice', [ $this, 'handle_resend_invoice' ] );
 		add_action( 'admin_notices', [ $this, 'render_admin_notice' ] );
 		add_action( 'admin_head', [ $this, 'print_admin_styles' ] );
+		add_action( 'admin_footer', [ $this, 'render_action_forms' ] );
 	}
 
 	public function add_tax_invoice_metabox() {
@@ -53,7 +56,7 @@ class YoOhw_Tir_Admin {
 			return;
 		}
 
-		$pdf_path       = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$pdf_path       = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 		$invoice_number = $order->get_meta( '_yoohw_tir_invoice_number' );
 		$status         = $order->get_meta( '_yoohw_tir_status' );
 		$tax_id_label   = $order->get_meta( '_yoohw_tir_tax_id_label' );
@@ -122,18 +125,44 @@ class YoOhw_Tir_Admin {
 	}
 
 	public function handle_regenerate_invoice() {
-		$order = $this->get_action_order( 'yoohw_tir_regenerate_invoice' );
+		$this->handle_invoice_action( 'yoohw_tir_regenerate_invoice' );
+	}
 
+	public function handle_resend_invoice() {
+		$this->handle_invoice_action( 'yoohw_tir_resend_invoice' );
+	}
+
+	private function handle_invoice_action( $action ) {
+		$order = $this->get_action_order( $action );
 		if ( is_wp_error( $order ) ) {
 			$this->redirect_with_notice( 0, 'error', $order->get_error_message() );
 		}
 
+		$lock = YoOhw_Tir_Order_Lock::acquire( $order->get_id() );
+		if ( is_wp_error( $lock ) ) {
+			$this->redirect_with_notice( $order->get_id(), 'warning', $lock->get_error_message() );
+		}
+
+		try {
+			$order = wc_get_order( $order->get_id() );
+			YoOhw_Tir_Order_Lock::refresh( $order );
+			$result = 'yoohw_tir_regenerate_invoice' === $action
+				? $this->regenerate_invoice( $order )
+				: $this->resend_invoice( $order );
+		} finally {
+			YoOhw_Tir_Order_Lock::release( $lock );
+		}
+
+		$this->redirect_with_notice( $order->get_id(), $result[0], $result[1] );
+	}
+
+	private function regenerate_invoice( WC_Order $order ) {
 		$order_id          = $order->get_id();
-		$previous_pdf_path = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$previous_pdf_path = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 		$result            = YoOhw_Tir_PDF_Generator::generate( $order_id );
 
 		if ( is_wp_error( $result ) ) {
-			$this->redirect_with_notice( $order->get_id(), 'error', $result->get_error_message() );
+			return [ 'error', $result->get_error_message() ];
 		}
 
 		$this->delete_replaced_pdf( $previous_pdf_path, $result['path'] );
@@ -145,21 +174,14 @@ class YoOhw_Tir_Admin {
 			$order->save();
 		}
 
-		$this->redirect_with_notice(
-			$order_id,
+		return [
 			'success',
 			__( 'Tax invoice PDF regenerated.', 'yoohw-tax-invoice-requests' )
-		);
+		];
 	}
 
-	public function handle_resend_invoice() {
-		$order = $this->get_action_order( 'yoohw_tir_resend_invoice' );
-
-		if ( is_wp_error( $order ) ) {
-			$this->redirect_with_notice( 0, 'error', $order->get_error_message() );
-		}
-
-		$pdf_path = $order->get_meta( '_yoohw_tir_pdf_path' );
+	private function resend_invoice( WC_Order $order ) {
+		$pdf_path = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 
 		if (
 			empty( $pdf_path ) ||
@@ -167,41 +189,41 @@ class YoOhw_Tir_Admin {
 			! class_exists( 'YoOhw_Tir_PDF_Generator' ) ||
 			! YoOhw_Tir_PDF_Generator::is_invoice_file_path( $pdf_path )
 		) {
-			$this->redirect_with_notice(
-				$order->get_id(),
+			return [
 				'error',
 				__( 'Tax invoice PDF file was not found. Regenerate it before resending.', 'yoohw-tax-invoice-requests' )
-			);
+			];
 		}
 
 		$email = $this->get_tax_invoice_email();
 
 		if ( ! $email ) {
-			$this->redirect_with_notice(
-				$order->get_id(),
+			return [
 				'error',
 				__( 'Tax invoice email class is not available.', 'yoohw-tax-invoice-requests' )
-			);
+			];
 		}
 
 		$sent = $email->trigger( $order->get_id() );
 
+		$order->update_meta_data( '_yoohw_tir_email_status', $sent ? 'accepted' : 'failed' );
+		$order->save();
+
 		if ( ! $sent ) {
-			$this->redirect_with_notice(
-				$order->get_id(),
+			$order->add_order_note( __( 'Admin resend failed. The existing tax invoice PDF was retained.', 'yoohw-tax-invoice-requests' ) );
+			return [
 				'error',
 				__( 'Tax invoice email could not be sent. Check the recipient and WooCommerce email settings.', 'yoohw-tax-invoice-requests' )
-			);
+			];
 		}
 
 		$order->add_order_note( __( 'Tax invoice email was resent by an admin.', 'yoohw-tax-invoice-requests' ) );
 		$order->save();
 
-		$this->redirect_with_notice(
-			$order->get_id(),
+		return [
 			'success',
 			__( 'Tax invoice email resent.', 'yoohw-tax-invoice-requests' )
-		);
+		];
 	}
 
 	public function render_admin_notice() {
@@ -265,13 +287,22 @@ class YoOhw_Tir_Admin {
 
 	private function render_admin_action_form( $action, $order_id, $label ) {
 		$order_id = absint( $order_id );
+		$form_id  = sanitize_key( $action . '_' . $order_id );
+		$this->action_forms[ $form_id ] = [ $action, $order_id ];
 
-		echo '<form class="yoohw-tir-admin-action-form" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
-		echo '<input type="hidden" name="action" value="' . esc_attr( sanitize_key( $action ) ) . '">';
-		echo '<input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '">';
-		wp_nonce_field( $action . '_' . $order_id );
-		echo '<button type="submit" class="button yoohw-tir-admin-button">' . esc_html( $label ) . '</button>';
-		echo '</form>';
+		// The order editor already contains a form. Associate buttons with footer forms.
+		echo '<button type="submit" form="' . esc_attr( $form_id ) . '" class="button yoohw-tir-admin-button">' . esc_html( $label ) . '</button>';
+	}
+
+	public function render_action_forms() {
+		foreach ( $this->action_forms as $form_id => $args ) {
+			list( $action, $order_id ) = $args;
+			echo '<form hidden id="' . esc_attr( $form_id ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+			echo '<input type="hidden" name="action" value="' . esc_attr( $action ) . '">';
+			echo '<input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '">';
+			wp_nonce_field( $action . '_' . $order_id, '_wpnonce', false );
+			echo '</form>';
+		}
 	}
 
 	private function get_action_order( $action ) {
@@ -321,6 +352,8 @@ class YoOhw_Tir_Admin {
 	}
 
 	private function get_tax_invoice_email() {
+		$mailer = WC()->mailer();
+
 		if ( ! class_exists( 'YoOhw_Tir_Email_Tax_Invoice' ) ) {
 			require_once YOOHW_TIR_PATH . 'includes/emails/class-wc-email-tax-invoice.php';
 		}
@@ -329,9 +362,7 @@ class YoOhw_Tir_Admin {
 			return null;
 		}
 
-		WC()->mailer();
-
-		$emails = WC()->mailer()->get_emails();
+		$emails = $mailer->get_emails();
 
 		if ( ! empty( $emails['YoOhw_Tir_Email_Tax_Invoice'] ) ) {
 			return $emails['YoOhw_Tir_Email_Tax_Invoice'];

@@ -45,7 +45,13 @@ The configurable tax ID label can be used for VAT, GST, ABN, TRN, Tax ID, or ano
 
 Generated PDFs can include seller and customer details, invoice and order dates, order items, quantities, subtotals, taxes, totals, currency, payment method, and a custom footer or legal note. An optional line-item tax-rate column and tax summary can be enabled.
 
-Invoice requests use nonce and order-access checks. Downloads pass through a protected handler with customer ownership, guest order-key, or store-management permission checks. PDF files use randomized names and validated paths, and remote fetching in Dompdf is disabled by default.
+Invoice requests use nonce and order-access checks. Downloads pass through a protected handler with customer ownership, guest order-key, or store-management permission checks. PDF files use randomized names and validated private paths, and remote fetching in Dompdf is disabled by default.
+
+PDFs are stored in a dedicated private directory outside the web document root, rather than in uploads. By default, the directory is created beside the document root and is unique to this installation/site. The PHP process must be able to create and write this directory. All PHP workers serving the installation must share this directory on a filesystem that supports `flock`; invoice operations hold a per-order file lock there, including across database reconnects. Lock files are retained to preserve lock identity. No Apache or Nginx deny rule is needed for this storage location. If the default location is unavailable, define `YOOHW_TIR_PRIVATE_DIR` in `wp-config.php` as an absolute path to a dedicated writable directory outside all publicly served directories. Existing parent directories must already exist. The plugin rejects paths inside the known document root, WordPress directory or uploads, and does not fall back to public storage.
+
+Existing PDFs in `uploads/yoohw-tax-invoices` are moved to private storage when the plugin loads, preserving their bytes and filenames. Existing order metadata remains readable without rewriting order records. If a move fails, an admin error is displayed and new PDF generation is blocked. Any files still in uploads can remain accessible directly until they are moved; resolve that error before continuing. Include the private directory in backups and preserve its location when restoring the site. Do not expose it through a web-server alias or a public symlink. After rolling back to a version that stores PDFs in uploads, direct-access protection is again the server administrator's responsibility.
+
+CLI jobs must supply the actual `DOCUMENT_ROOT` (for example via `$_SERVER['DOCUMENT_ROOT']` before bootstrapping WordPress), or use an explicitly configured `YOOHW_TIR_PRIVATE_DIR`. Without either, private PDF operations fail with an actionable storage error.
 
 = Legal and accounting scope =
 
@@ -76,7 +82,7 @@ Store managers choose the allowed statuses under **WooCommerce > Settings > Tax 
 
 = Is the PDF generated and emailed automatically? =
 
-Yes. After a valid request, the plugin attempts to generate the PDF and sends it through a dedicated WooCommerce customer email.
+Yes. The first valid request is recorded before PDF generation and the automatic email attempt. Replaying the request does not overwrite invoice details or generate/send another invoice. If PDF generation or email fails, contact the store: an administrator can regenerate the PDF or resend the existing invoice from the order editor. Email acceptance by the mail transport does not confirm inbox delivery.
 
 = Can customers download the invoice later? =
 

@@ -37,8 +37,26 @@ if ( ! function_exists( 'yoohw_tir_state_name_only' ) ) {
 	}
 }
 
+if ( ! function_exists( 'yoohw_tir_get_order_tax_rate_percent' ) ) {
+	function yoohw_tir_get_order_tax_rate_percent( WC_Order $order, $rate_id ) {
+		foreach ( $order->get_items( 'tax' ) as $tax_item ) {
+			if ( (int) $tax_item->get_rate_id() === (int) $rate_id && method_exists( $tax_item, 'get_rate_percent' ) ) {
+				// Older orders may have no snapshot. Omit the percentage rather than use today's rate.
+				if ( $tax_item->get_id() && ! metadata_exists( 'order_item', $tax_item->get_id(), 'rate_percent' ) ) {
+					return '';
+				}
+				$percent = $tax_item->get_rate_percent( 'edit' );
+				return is_numeric( $percent ) ? wc_format_decimal( $percent, 2 ) . '%' : '';
+			}
+		}
+
+		return '';
+	}
+}
+
 if ( ! function_exists( 'yoohw_tir_get_item_tax_rates' ) ) {
-	function yoohw_tir_get_item_tax_rates( $yoohw_tir_item ) {
+	function yoohw_tir_get_item_tax_rates( $yoohw_tir_item, $order = null ) {
+		$order = $order instanceof WC_Order ? $order : $yoohw_tir_item->get_order();
 		$tax_rate_labels = [];
 		$yoohw_tir_item_taxes      = $yoohw_tir_item->get_taxes();
 
@@ -47,14 +65,12 @@ if ( ! function_exists( 'yoohw_tir_get_item_tax_rates' ) ) {
 		}
 
 		foreach ( $yoohw_tir_item_taxes['total'] as $yoohw_tir_rate_id => $yoohw_tir_tax_amount ) {
-			if ( (float) $yoohw_tir_tax_amount <= 0 ) {
+			if ( 0.0 === (float) $yoohw_tir_tax_amount ) {
 				continue;
 			}
 
-			$yoohw_tir_rate = WC_Tax::_get_tax_rate( $yoohw_tir_rate_id );
-
-			if ( ! empty( $yoohw_tir_rate['tax_rate'] ) ) {
-				$tax_rate_labels[] = wc_format_decimal( $yoohw_tir_rate['tax_rate'], 2 ) . '%';
+			if ( $order instanceof WC_Order ) {
+				$tax_rate_labels[] = yoohw_tir_get_order_tax_rate_percent( $order, $yoohw_tir_rate_id );
 			}
 		}
 
@@ -66,8 +82,10 @@ if ( ! function_exists( 'yoohw_tir_get_item_tax_rates' ) ) {
 
 if ( ! function_exists( 'yoohw_tir_get_order_tax_summary_rows' ) ) {
 	function yoohw_tir_get_order_tax_summary_rows( WC_Order $order ) {
-		$rows            = [];
-		$tax_item_labels = [];
+		$rows               = [];
+		$tax_item_labels    = [];
+		$positive_rate_sets = [];
+		$negative_fee_rates = [];
 
 		foreach ( $order->get_items( 'tax' ) as $yoohw_tir_tax_item ) {
 			$tax_item_labels[ absint( $yoohw_tir_tax_item->get_rate_id() ) ] = $yoohw_tir_tax_item->get_label();
@@ -80,35 +98,43 @@ if ( ! function_exists( 'yoohw_tir_get_order_tax_summary_rows' ) ) {
 				}
 
 				$yoohw_tir_item_taxes = $yoohw_tir_item->get_taxes();
+				$yoohw_tir_taxable_amount = (float) $yoohw_tir_item->get_total();
+				$item_tax_totals = isset( $yoohw_tir_item_taxes['total'] ) && is_array( $yoohw_tir_item_taxes['total'] ) ? $yoohw_tir_item_taxes['total'] : [];
+				$item_rate_ids = array_map( 'intval', array_keys( array_filter(
+					$item_tax_totals,
+					static function( $amount ) { return 0.0 !== (float) $amount; }
+				) ) );
+				if ( $yoohw_tir_taxable_amount > 0 ) {
+					// Keep exempt items too: negative fees can be apportioned to them.
+					$positive_rate_sets[] = $item_rate_ids;
+				}
 
 				if ( empty( $yoohw_tir_item_taxes['total'] ) || ! is_array( $yoohw_tir_item_taxes['total'] ) ) {
 					continue;
 				}
 
-				$yoohw_tir_taxable_amount = (float) $yoohw_tir_item->get_total();
-
 				foreach ( $yoohw_tir_item_taxes['total'] as $yoohw_tir_rate_id => $yoohw_tir_tax_amount ) {
 					$yoohw_tir_rate_id    = absint( $yoohw_tir_rate_id );
 					$yoohw_tir_tax_amount = (float) $yoohw_tir_tax_amount;
 
-					if ( $yoohw_tir_tax_amount <= 0 ) {
+					if ( 0.0 === $yoohw_tir_tax_amount ) {
 						continue;
 					}
 
-					if ( ! isset( $rows[ $yoohw_tir_rate_id ] ) ) {
-						$yoohw_tir_rate       = WC_Tax::_get_tax_rate( $yoohw_tir_rate_id );
-						$yoohw_tir_rate_label = isset( $tax_item_labels[ $yoohw_tir_rate_id ] ) ? $tax_item_labels[ $yoohw_tir_rate_id ] : '';
+					if ( 'fee' === $yoohw_tir_item_type && $yoohw_tir_taxable_amount < 0 ) {
+						$negative_fee_rates[ $yoohw_tir_rate_id ] = ( $negative_fee_rates[ $yoohw_tir_rate_id ] ?? false ) || count( $item_rate_ids ) !== 1;
+					}
 
-						if ( empty( $yoohw_tir_rate_label ) && ! empty( $yoohw_tir_rate['tax_rate_name'] ) ) {
-							$yoohw_tir_rate_label = $yoohw_tir_rate['tax_rate_name'];
-						}
+					if ( ! isset( $rows[ $yoohw_tir_rate_id ] ) ) {
+						$yoohw_tir_rate_percent = yoohw_tir_get_order_tax_rate_percent( $order, $yoohw_tir_rate_id );
+						$yoohw_tir_rate_label = isset( $tax_item_labels[ $yoohw_tir_rate_id ] ) ? $tax_item_labels[ $yoohw_tir_rate_id ] : '';
 
 						if ( empty( $yoohw_tir_rate_label ) ) {
 							$yoohw_tir_rate_label = __( 'Tax', 'yoohw-tax-invoice-requests' );
 						}
 
-						if ( ! empty( $yoohw_tir_rate['tax_rate'] ) ) {
-							$yoohw_tir_rate_label .= ' (' . wc_format_decimal( $yoohw_tir_rate['tax_rate'], 2 ) . '%)';
+						if ( '' !== $yoohw_tir_rate_percent ) {
+							$yoohw_tir_rate_label .= ' (' . $yoohw_tir_rate_percent . ')';
 						}
 
 						$rows[ $yoohw_tir_rate_id ] = [
@@ -120,6 +146,20 @@ if ( ! function_exists( 'yoohw_tir_get_order_tax_summary_rows' ) ) {
 
 					$rows[ $yoohw_tir_rate_id ]['taxable_amount'] += $yoohw_tir_taxable_amount;
 					$rows[ $yoohw_tir_rate_id ]['tax_amount']     += $yoohw_tir_tax_amount;
+				}
+			}
+		}
+
+		// WooCommerce stores fee tax amounts, but not their apportioned taxable bases.
+		// A full fee base is safe only when every positive item has the same single rate.
+		foreach ( $negative_fee_rates as $rate_id => $mixed_fee_rates ) {
+			if ( $mixed_fee_rates || empty( $positive_rate_sets ) ) {
+				$rows[ $rate_id ]['taxable_amount'] = null;
+			}
+			foreach ( $positive_rate_sets as $rate_ids ) {
+				if ( [ $rate_id ] !== $rate_ids ) {
+					$rows[ $rate_id ]['taxable_amount'] = null;
+					break;
 				}
 			}
 		}
@@ -383,7 +423,7 @@ if (
 			<tr>
 				<th><?php esc_html_e( 'Description', 'yoohw-tax-invoice-requests' ); ?></th>
 				<th class="text-right"><?php esc_html_e( 'Qty', 'yoohw-tax-invoice-requests' ); ?></th>
-				<th class="text-right"><?php esc_html_e( 'Subtotal', 'yoohw-tax-invoice-requests' ); ?></th>
+				<th class="text-right"><?php esc_html_e( 'Net amount', 'yoohw-tax-invoice-requests' ); ?></th>
 
 				<?php if ( $yoohw_tir_show_tax_rate_column ) : ?>
 					<th class="text-right"><?php esc_html_e( 'Tax rate', 'yoohw-tax-invoice-requests' ); ?></th>
@@ -422,17 +462,17 @@ if (
 					</td>
 
 					<td class="text-right">
-						<?php echo wp_kses_post( wc_price( $yoohw_tir_item->get_subtotal(), [ 'currency' => $order->get_currency() ] ) ); ?>
+						<?php echo wp_kses_post( wc_price( $yoohw_tir_item->get_total(), [ 'currency' => $order->get_currency() ] ) ); ?>
 					</td>
 
 					<?php if ( $yoohw_tir_show_tax_rate_column ) : ?>
 						<td class="text-right">
-							<?php echo esc_html( yoohw_tir_get_item_tax_rates( $yoohw_tir_item ) ); ?>
+							<?php echo esc_html( yoohw_tir_get_item_tax_rates( $yoohw_tir_item, $order ) ); ?>
 						</td>
 					<?php endif; ?>
 
 					<td class="text-right">
-						<?php echo wp_kses_post( wc_price( $yoohw_tir_item->get_subtotal_tax(), [ 'currency' => $order->get_currency() ] ) ); ?>
+						<?php echo wp_kses_post( wc_price( $yoohw_tir_item->get_total_tax(), [ 'currency' => $order->get_currency() ] ) ); ?>
 					</td>
 
 					<td class="text-right">
@@ -480,7 +520,7 @@ if (
 						<td><?php echo esc_html( $yoohw_tir_tax_row['label'] ); ?></td>
 
 						<td class="text-right">
-							<?php echo wp_kses_post( wc_price( $yoohw_tir_tax_row['taxable_amount'], [ 'currency' => $order->get_currency() ] ) ); ?>
+							<?php echo null === $yoohw_tir_tax_row['taxable_amount'] ? '-' : wp_kses_post( wc_price( $yoohw_tir_tax_row['taxable_amount'], [ 'currency' => $order->get_currency() ] ) ); ?>
 						</td>
 
 						<td class="text-right">
@@ -490,6 +530,9 @@ if (
 				<?php endforeach; ?>
 			</tbody>
 		</table>
+		<?php if ( in_array( null, array_column( $yoohw_tir_tax_summary_rows, 'taxable_amount' ), true ) ) : ?>
+			<p><small><?php esc_html_e( 'Taxable amount is not shown where a fee allocation cannot be determined from the order records.', 'yoohw-tax-invoice-requests' ); ?></small></p>
+		<?php endif; ?>
 	<?php endif; ?>
 
 	<?php if ( $yoohw_tir_invoice_note ) : ?>

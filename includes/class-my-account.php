@@ -24,7 +24,7 @@ class YoOhw_Tir_My_Account {
 		}
 
 		$requested     = $order->get_meta( '_yoohw_tir_requested' );
-		$pdf_path      = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$pdf_path      = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 		$is_order_view = is_wc_endpoint_url( 'view-order' );
 
 		if ( 'yes' === $requested ) {
