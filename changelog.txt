@@ -1,5 +1,17 @@
 Tax Invoice Requests for WooCommerce Changelog
 
+1.0.2 - November 10, 2026
+
+- Prevented duplicate automatic invoice processing across replayed/concurrent requests and database reconnects, while preserving explicit admin resend.
+- Fixed nested admin action forms and cold mailer initialization; retained Save order behavior.
+- Recorded email transport acceptance/failure separately from PDF generation and provided recovery feedback.
+- Corrected post-coupon net/tax totals, historical tax-rate snapshots, and negative fee taxes; omitted uncertain apportioned taxable bases with an explanation.
+- Moved PDF storage outside the web document root without relying on .htaccess; migrated legacy files byte-for-byte and preserved order metadata and invoice numbers.
+- Added per-order file locking, path validation, migration collision/incomplete-move checks, and focused HPOS/legacy/storage regression coverage.
+- Restored PHP 7.4 compatibility for bundled dependencies and updated Dompdf to 3.1.6.
+- Shortened the WordPress.org description to 105 characters and updated Tested up to to WordPress 7.1.
+- Private storage must be shared by all PHP workers with flock support and included in backups alongside the database.
+
 1.0.1 - June 23, 2026
 
 - Bumped plugin version from 1.0.0 to 1.0.1.
