@@ -136,10 +136,28 @@ function tir_fixture( $user_id, &$orders ) {
 if ( 'suite' !== $mode ) {
 	wp_set_current_user( (int) $argv[4] );
 	WC()->session = new WC_Session_Handler();
-	$result = 'worker' === $mode
+	if ( 'slow-note' === $mode ) {
+		add_action( 'woocommerce_order_note_added', function( $note_id ) use ( $events ) {
+			$note = get_comment( $note_id );
+			if ( ! $note || false === strpos( $note->comment_content, 'Customer requested a tax invoice.' ) ) {
+				return;
+			}
+			global $wpdb;
+			$connection = $wpdb->get_var( 'SELECT CONNECTION_ID()' );
+			// Only this worker's connection expires; the request is still in its critical section.
+			tir_assert( false !== $wpdb->query( 'SET SESSION wait_timeout = 1' ), 'Could not set fixture session timeout.' );
+			sleep( 2 );
+			file_put_contents( $events . '/connection-expired', (string) $connection );
+			$deadline = microtime( true ) + 20;
+			while ( ! is_file( $events . '/release' ) && microtime( true ) < $deadline ) { usleep( 20000 ); }
+			tir_assert( is_file( $events . '/release' ), 'Parent did not release expired-connection worker.' );
+		}, 10, 1 );
+	}
+	$result = in_array( $mode, [ 'worker', 'slow-note' ], true )
 		? tir_submit( (int) $argv[3], 'concurrent@example.test' )
 		: tir_admin_action( (int) $argv[3], 'admin-resend' === $mode ? 'yoohw_tir_resend_invoice' : 'yoohw_tir_regenerate_invoice' );
-	file_put_contents( $events . '/' . $mode . '-' . getmypid(), json_encode( [ 'redirect' => $result, 'notices' => wc_get_notices() ] ) );
+	global $wpdb;
+	file_put_contents( $events . '/' . $mode . '-' . getmypid(), json_encode( [ 'redirect' => $result, 'notices' => wc_get_notices(), 'connection' => $wpdb->get_var( 'SELECT CONNECTION_ID()' ) ] ) );
 	exit;
 }
 
@@ -278,6 +296,41 @@ try {
 	$order = tir_order( $order->get_id() );
 	tir_assert( 'accepted' === $order->get_meta( '_yoohw_tir_email_status' ), 'Concurrent winning worker did not complete.' );
 	echo "PASS two independent PHP workers overlapped during send: one generate/one intercepted mail attempt; competing worker rejected; stale reader replay blocked\n";
+
+	// Expire A's DB connection before request metadata is saved, while A still owns the invoice lock.
+	foreach ( glob( $dir . '/*' ) as $file ) { unlink( $file ); }
+	$order = tir_fixture( $user_id, $orders );
+	$command = [ PHP_BINARY, '-d', 'mysqli.default_socket=' . ini_get( 'mysqli.default_socket' ), __FILE__, 'slow-note', $dir, (string) $order->get_id(), (string) $user_id ];
+	$first = proc_open( $command, [ 0 => [ 'pipe', 'r' ], 1 => [ 'file', $dir . '/first.out', 'w' ], 2 => [ 'file', $dir . '/first.err', 'w' ] ], $pipes );
+	$deadline = microtime( true ) + 20;
+	while ( ! is_file( $dir . '/connection-expired' ) && microtime( true ) < $deadline ) { usleep( 20000 ); }
+	tir_assert( is_file( $dir . '/connection-expired' ), 'Slow-note worker never reached expired connection: ' . file_get_contents( $dir . '/first.err' ) );
+	$command[4] = 'worker';
+	$second = proc_open( $command, [ 0 => [ 'pipe', 'r' ], 1 => [ 'file', $dir . '/second.out', 'w' ], 2 => [ 'file', $dir . '/second.err', 'w' ] ], $pipes );
+	$second_exit = proc_close( $second );
+	touch( $dir . '/release' );
+	$first_exit = proc_close( $first );
+	tir_assert( 0 === $first_exit && 0 === $second_exit, 'Expired-connection workers failed: ' . file_get_contents( $dir . '/first.err' ) . file_get_contents( $dir . '/second.err' ) );
+	$first_results = glob( $dir . '/slow-note-*' );
+	$second_results = glob( $dir . '/worker-*' );
+	tir_assert( 1 === count( $first_results ) && 1 === count( $second_results ), 'Missing expired-connection worker results.' );
+	$first_result = json_decode( file_get_contents( $first_results[0] ), true );
+	$second_result = json_decode( file_get_contents( $second_results[0] ), true );
+	tir_assert( (string) $first_result['connection'] !== trim( file_get_contents( $dir . '/connection-expired' ) ), 'Fixture did not cause an actual DB reconnect.' );
+	$generation_count = tir_generated_count( $order->get_id() );
+	$mail_attempts = is_file( $dir . '/mail' ) ? substr_count( file_get_contents( $dir . '/mail' ), "attempt\n" ) : 0;
+	tir_assert( false !== strpos( json_encode( $second_result['notices'] ), 'being processed' ) && 1 === $generation_count && 1 === $mail_attempts, 'DB reconnect lost invoice exclusion: generations=' . $generation_count . ', mail_attempts=' . $mail_attempts . ', competitor=' . json_encode( $second_result ) );
+	$order = wc_get_order( $order->get_id() );
+	$verification_lock = YoOhw_Tir_Order_Lock::acquire( $order->get_id() );
+	tir_assert( ! is_wp_error( $verification_lock ), 'Completed worker retained the invoice lock.' );
+	try {
+		YoOhw_Tir_Order_Lock::refresh( $order );
+	} finally {
+		YoOhw_Tir_Order_Lock::release( $verification_lock );
+	}
+	tir_assert( 'accepted' === $order->get_meta( '_yoohw_tir_email_status' ), 'Expired-connection winning worker did not complete.' );
+	echo "PASS real SESSION wait_timeout reconnect retains invoice exclusion: competing worker busy, one generation/mail\n";
+
 } catch ( Throwable $error ) {
 	$failed = true;
 	fwrite( STDERR, 'FAIL ' . $error->getMessage() . "\n" );

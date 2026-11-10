@@ -337,7 +337,7 @@ class YoOhw_Tir_PDF_Generator {
 	}
 
 	/** Move legacy PDFs, preserving bytes and names, before they can be used again. */
-	private static function prepare_storage() {
+	public static function prepare_storage() {
 		$base_dir = self::get_invoice_base_dir();
 		if ( is_wp_error( $base_dir ) ) {
 			return $base_dir;

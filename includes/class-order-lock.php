@@ -4,24 +4,32 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/** Serializes invoice operations on one order, across PHP workers and storage modes. */
+/** Serializes invoice operations across workers, independently of database reconnects. */
 class YoOhw_Tir_Order_Lock {
 	public static function acquire( $order_id ) {
-		global $wpdb;
+		$directory = YoOhw_Tir_PDF_Generator::prepare_storage();
+		if ( is_wp_error( $directory ) ) {
+			return $directory;
+		}
 
-		$name = 'yoohw_tir_' . md5( DB_NAME . ':' . $wpdb->prefix . ':' . absint( $order_id ) );
-		// Connection-owned: no expiring lease can allow another worker in mid-send.
-		$acquired = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 0)', $name ) );
-		if ( '1' !== (string) $acquired ) {
+		$path = $directory . '.order-' . absint( $order_id ) . '.lock';
+		$lock = is_link( $path ) ? false : @fopen( $path, 'c' );
+		if ( ! $lock || ! flock( $lock, LOCK_EX | LOCK_NB ) ) {
+			if ( is_resource( $lock ) ) {
+				fclose( $lock );
+			}
 			return new WP_Error( 'invoice_busy', __( 'This invoice is being processed or could not be locked. Please try again shortly.', 'yoohw-tax-invoice-requests' ) );
 		}
 
-		return $name;
+		return $lock;
 	}
 
-	public static function release( $name ) {
-		global $wpdb;
-		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
+	public static function release( $lock ) {
+		if ( is_resource( $lock ) ) {
+			flock( $lock, LOCK_UN );
+			fclose( $lock );
+		}
+		// Keep the file: unlinking lets a competing worker lock a different inode.
 	}
 
 	/** Refresh a previously loaded order only while holding its invoice lock. */
