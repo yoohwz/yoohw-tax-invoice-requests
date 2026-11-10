@@ -47,6 +47,8 @@ Generated PDFs can include seller and customer details, invoice and order dates,
 
 Invoice requests use nonce and order-access checks. Downloads pass through a protected handler with customer ownership, guest order-key, or store-management permission checks. PDF files use randomized names and validated paths, and remote fetching in Dompdf is disabled by default.
 
+PDFs are stored under the uploads directory in `yoohw-tax-invoices`. The plugin writes Apache `.htaccess` deny rules; servers such as Nginx do not apply these rules. Before enabling invoice requests, configure the web server to deny all direct HTTP access to this directory (including PDF files), and verify that a non-sensitive test file returns 403 or 404 while authorized plugin downloads still work. Random filenames do not replace access control. For a standard Nginx uploads path, the server administrator can use `location ^~ /wp-content/uploads/yoohw-tax-invoices/ { deny all; }`, adjusting the path for the installation. Existing files need the same protection.
+
 = Legal and accounting scope =
 
 This plugin generates PDFs from WooCommerce order records and the information submitted by the customer. It does not replace accounting software, tax advice, fiscal authorization, e-invoicing clearance, or country-specific compliance services. Store owners must confirm that their settings and invoice output meet applicable legal, tax, and record-keeping requirements.
@@ -76,7 +78,7 @@ Store managers choose the allowed statuses under **WooCommerce > Settings > Tax 
 
 = Is the PDF generated and emailed automatically? =
 
-Yes. After a valid request, the plugin attempts to generate the PDF and sends it through a dedicated WooCommerce customer email.
+Yes. The first valid request is recorded before PDF generation and the automatic email attempt. Replaying the request does not overwrite invoice details or generate/send another invoice. If PDF generation or email fails, contact the store: an administrator can regenerate the PDF or resend the existing invoice from the order editor. Email acceptance by the mail transport does not confirm inbox delivery.
 
 = Can customers download the invoice later? =
 
