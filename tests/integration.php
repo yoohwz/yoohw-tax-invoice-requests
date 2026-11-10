@@ -2,6 +2,7 @@
 /**
  * Local-only WordPress/WooCommerce integration regression.
  * TIR_WP_LOAD=/path/to/wp-load.php php -d mysqli.default_socket=/path/to/mysql.sock tests/integration.php
+ * Set TIR_DOCUMENT_ROOT to the actual web document root for private PDF storage.
  * Optional TIR_TEST_LEGACY=1 uses the legacy order datastore without changing DB options.
  * Creates and deletes fixture orders/user. All mail is intercepted before transport.
  */
@@ -10,6 +11,9 @@ $bootstrap = getenv( 'TIR_WP_LOAD' );
 if ( ! $bootstrap || ! is_file( $bootstrap ) ) {
 	fwrite( STDERR, "Set TIR_WP_LOAD to a disposable local WordPress wp-load.php.\n" );
 	exit( 1 );
+}
+if ( getenv( 'TIR_DOCUMENT_ROOT' ) ) {
+	$_SERVER['DOCUMENT_ROOT'] = getenv( 'TIR_DOCUMENT_ROOT' );
 }
 $mode   = $argv[1] ?? 'suite';
 $events = $argv[2] ?? '';

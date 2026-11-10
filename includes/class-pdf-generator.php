@@ -16,11 +16,35 @@ class YoOhw_Tir_PDF_Generator {
 	const INVOICE_NUMBER_LOCK = 'yoohw_tir_invoice_number_lock';
 
 	public static function maybe_protect_invoice_folder() {
-		$base_dir = self::get_invoice_base_dir();
-
-		if ( is_dir( $base_dir ) ) {
-			self::protect_folder( $base_dir );
+		$result = self::prepare_storage();
+		if ( is_wp_error( $result ) ) {
+			add_action( 'admin_notices', static function() use ( $result ) {
+				if ( current_user_can( 'manage_woocommerce' ) ) {
+					echo '<div class="notice notice-error"><p>' . esc_html( $result->get_error_message() ) . '</p></div>';
+				}
+			} );
 		}
+	}
+
+	/** Resolve legacy metadata without saving a potentially stale order object. */
+	public static function get_order_pdf_path( WC_Order $order ) {
+		$path = $order->get_meta( self::META_PDF_PATH );
+		if ( self::is_invoice_file_path( $path ) ) {
+			return $path;
+		}
+
+		$base_dir = self::get_invoice_base_dir();
+		$legacy   = self::get_legacy_base_dir();
+		if ( ! $path || is_wp_error( $base_dir ) || wp_normalize_path( dirname( $path ) ) !== untrailingslashit( wp_normalize_path( $legacy ) ) ) {
+			return '';
+		}
+		// A surviving source means migration is incomplete or collided with another file.
+		clearstatcache( true, $path );
+		if ( file_exists( $path ) || is_link( $path ) ) {
+			return '';
+		}
+		$path = $base_dir . basename( $path );
+		return self::is_invoice_file_path( $path ) ? $path : '';
 	}
 
 	public static function is_invoice_file_path( $file_path ) {
@@ -28,10 +52,15 @@ class YoOhw_Tir_PDF_Generator {
 			return false;
 		}
 
-		$allowed_dir = realpath( self::get_invoice_base_dir() );
+		$base_dir = self::get_invoice_base_dir();
+		if ( is_wp_error( $base_dir ) ) {
+			return false;
+		}
+		$allowed_dir = realpath( $base_dir );
 		$real_file   = realpath( $file_path );
 
-		$allowed_dir = $allowed_dir ? trailingslashit( $allowed_dir ) : '';
+		$allowed_dir = $allowed_dir ? trailingslashit( wp_normalize_path( $allowed_dir ) ) : '';
+		$real_file   = $real_file ? wp_normalize_path( $real_file ) : false;
 
 		return (
 			$allowed_dir &&
@@ -42,6 +71,10 @@ class YoOhw_Tir_PDF_Generator {
 	}
 
 	public static function generate( $order_id ) {
+		$base_dir = self::prepare_storage();
+		if ( is_wp_error( $base_dir ) ) {
+			return $base_dir;
+		}
 		$order = wc_get_order( $order_id );
 
 		if ( ! $order ) {
@@ -64,14 +97,6 @@ class YoOhw_Tir_PDF_Generator {
 		if ( empty( $html ) ) {
 			return new WP_Error( 'empty_html', __( 'Invoice template is empty.', 'yoohw-tax-invoice-requests' ) );
 		}
-
-		$base_dir = self::get_invoice_base_dir();
-
-		if ( ! wp_mkdir_p( $base_dir ) ) {
-			return new WP_Error( 'folder_failed', __( 'Could not create invoice folder.', 'yoohw-tax-invoice-requests' ) );
-		}
-
-		self::protect_folder( $base_dir );
 
 		$file_name = sanitize_file_name(
 			sprintf(
@@ -111,7 +136,7 @@ class YoOhw_Tir_PDF_Generator {
 
 		$wp_filesystem = self::get_filesystem();
 
-		if ( ! $wp_filesystem || ! $wp_filesystem->put_contents( $file_path, $pdf_output, FS_CHMOD_FILE ) ) {
+		if ( ! $wp_filesystem || ! $wp_filesystem->put_contents( $file_path, $pdf_output, 0600 ) ) {
 			return new WP_Error( 'save_failed', __( 'Could not save PDF invoice.', 'yoohw-tax-invoice-requests' ) );
 		}
 
@@ -266,35 +291,88 @@ class YoOhw_Tir_PDF_Generator {
 		delete_option( self::INVOICE_NUMBER_LOCK );
 	}
 
-	private static function get_invoice_base_dir() {
+	private static function get_legacy_base_dir() {
 		$upload = wp_upload_dir();
-
 		return trailingslashit( $upload['basedir'] ) . self::INVOICE_DIR . '/';
 	}
 
-	private static function protect_folder( $base_dir ) {
-		$wp_filesystem = self::get_filesystem();
+	private static function storage_error() {
+		return new WP_Error( 'private_storage_unavailable', __( 'Tax invoice private storage is unavailable. Set YOOHW_TIR_PRIVATE_DIR to a writable directory outside the web document root. Existing PDFs in uploads must be moved out of public access before invoice processing can continue.', 'yoohw-tax-invoice-requests' ) );
+	}
 
-		if ( ! $wp_filesystem ) {
-			return;
+	private static function get_invoice_base_dir() {
+		$document_root = ! empty( $_SERVER['DOCUMENT_ROOT'] ) ? realpath( $_SERVER['DOCUMENT_ROOT'] ) : false;
+		if ( defined( 'YOOHW_TIR_PRIVATE_DIR' ) ) {
+			$directory = YOOHW_TIR_PRIVATE_DIR;
+		} elseif ( $document_root && is_dir( $document_root ) ) {
+			$directory = dirname( $document_root ) . '/' . self::INVOICE_DIR . '-' . substr( hash( 'sha256', ABSPATH . ':' . get_current_blog_id() ), 0, 12 );
+		} else {
+			// CLI must supply DOCUMENT_ROOT or an explicitly configured private directory.
+			return self::storage_error();
 		}
 
-		$index_file = trailingslashit( $base_dir ) . 'index.html';
+		if ( ! is_string( $directory ) || '' === $directory || false !== strpos( $directory, "\0" ) || ! path_is_absolute( $directory ) ) {
+			return self::storage_error();
+		}
+		$directory = untrailingslashit( $directory );
+		$parent    = realpath( dirname( $directory ) );
+		$resolved  = realpath( $directory );
+		if ( ! $resolved && ( ! $parent || file_exists( $directory ) || is_link( $directory ) ) ) {
+			return self::storage_error();
+		}
+		$resolved = $resolved ? $resolved : $parent . '/' . basename( $directory );
+		$resolved = trailingslashit( wp_normalize_path( $resolved ) );
 
-		if ( ! $wp_filesystem->exists( $index_file ) ) {
-			$wp_filesystem->put_contents( $index_file, '', FS_CHMOD_FILE );
+		$upload = wp_upload_dir();
+		foreach ( [ realpath( ABSPATH ), $document_root, realpath( $upload['basedir'] ) ] as $public_root ) {
+			if ( ! $public_root ) {
+				continue;
+			}
+			$public_root = trailingslashit( wp_normalize_path( $public_root ) );
+			if ( 0 === strpos( $resolved, $public_root ) || 0 === strpos( $public_root, $resolved ) ) {
+				return self::storage_error();
+			}
+		}
+		return $resolved;
+	}
+
+	/** Move legacy PDFs, preserving bytes and names, before they can be used again. */
+	private static function prepare_storage() {
+		$base_dir = self::get_invoice_base_dir();
+		if ( is_wp_error( $base_dir ) ) {
+			return $base_dir;
+		}
+		$filesystem = self::get_filesystem();
+		if ( ! $filesystem || ( ! is_dir( $base_dir ) && ! $filesystem->mkdir( $base_dir, 0700 ) ) || ! is_writable( $base_dir ) ) {
+			return self::storage_error();
 		}
 
-		$htaccess_file = trailingslashit( $base_dir ) . '.htaccess';
-		$htaccess_rules = "Options -Indexes\n<IfModule mod_authz_core.c>\n\tRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n\tOrder deny,allow\n\tDeny from all\n</IfModule>\n";
-
-		if ( ! $wp_filesystem->exists( $htaccess_file ) || $htaccess_rules !== $wp_filesystem->get_contents( $htaccess_file ) ) {
-			$wp_filesystem->put_contents(
-				$htaccess_file,
-				$htaccess_rules,
-				FS_CHMOD_FILE
-			);
+		$legacy = self::get_legacy_base_dir();
+		if ( is_link( untrailingslashit( $legacy ) ) ) {
+			return self::storage_error();
 		}
+		$files = glob( $legacy . '*.pdf' );
+		if ( false === $files ) {
+			return self::storage_error();
+		}
+		foreach ( $files as $source ) {
+			$destination = $base_dir . basename( $source );
+			if ( is_link( $source ) || ! is_file( $source ) || file_exists( $destination ) || is_link( $destination ) ) {
+				// Another worker may have already completed this exact move.
+				if ( ! file_exists( $source ) && self::is_invoice_file_path( $destination ) ) {
+					continue;
+				}
+				return self::storage_error();
+			}
+			$filesystem->move( $source, $destination, false );
+			// Some filesystem adapters report a successful copy even if source deletion fails.
+			clearstatcache( true, $source );
+			if ( file_exists( $source ) || is_link( $source ) || ! self::is_invoice_file_path( $destination ) ) {
+				return self::storage_error();
+			}
+			$filesystem->chmod( $destination, 0600 );
+		}
+		return $base_dir;
 	}
 
 	private static function get_filesystem() {

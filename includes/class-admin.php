@@ -56,7 +56,7 @@ class YoOhw_Tir_Admin {
 			return;
 		}
 
-		$pdf_path       = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$pdf_path       = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 		$invoice_number = $order->get_meta( '_yoohw_tir_invoice_number' );
 		$status         = $order->get_meta( '_yoohw_tir_status' );
 		$tax_id_label   = $order->get_meta( '_yoohw_tir_tax_id_label' );
@@ -158,7 +158,7 @@ class YoOhw_Tir_Admin {
 
 	private function regenerate_invoice( WC_Order $order ) {
 		$order_id          = $order->get_id();
-		$previous_pdf_path = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$previous_pdf_path = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 		$result            = YoOhw_Tir_PDF_Generator::generate( $order_id );
 
 		if ( is_wp_error( $result ) ) {
@@ -181,7 +181,7 @@ class YoOhw_Tir_Admin {
 	}
 
 	private function resend_invoice( WC_Order $order ) {
-		$pdf_path = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$pdf_path = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 
 		if (
 			empty( $pdf_path ) ||

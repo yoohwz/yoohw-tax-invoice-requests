@@ -106,7 +106,7 @@ if ( ! class_exists( 'YoOhw_Tir_Email_Tax_Invoice' ) ) {
 			$attachments = [];
 
 			if ( $this->object instanceof WC_Order ) {
-				$pdf_path = $this->object->get_meta( '_yoohw_tir_pdf_path' );
+				$pdf_path = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $this->object );
 
 				if (
 					$pdf_path &&

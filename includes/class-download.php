@@ -80,7 +80,7 @@ class YoOhw_Tir_Download {
 			wp_die( esc_html__( 'You are not allowed to download this invoice.', 'yoohw-tax-invoice-requests' ), 403 );
 		}
 
-		$file_path = $order->get_meta( '_yoohw_tir_pdf_path' );
+		$file_path = YoOhw_Tir_PDF_Generator::get_order_pdf_path( $order );
 
 		if ( empty( $file_path ) || ! file_exists( $file_path ) ) {
 			wp_die( esc_html__( 'Invoice file not found.', 'yoohw-tax-invoice-requests' ), 404 );
